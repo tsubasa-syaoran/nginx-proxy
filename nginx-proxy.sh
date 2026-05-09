@@ -1,52 +1,53 @@
-```bash
-#!/bin/bash
-
-# ==========================================
-# Nginx Reverse Proxy + SSL Auto Setup
-# 支持：
-# - 自动反向代理到指定端口
-# - 自动申请 HTTPS 证书
-# - 自动配置 nginx
-# - 自动开启 HTTPS
-#
-# 使用：
-# ==========================================
+#!/usr/bin/env bash
 
 set -e
 
-echo "======================================"
-echo " Nginx HTTPS 自动配置脚本"
-echo "======================================"
+red(){ echo -e "\033[31m\033[01m$*\033[0m"; }
+green(){ echo -e "\033[32m\033[01m$*\033[0m"; }
+yellow(){ echo -e "\033[33m\033[01m$*\033[0m"; }
+blue(){ echo -e "\033[36m\033[01m$*\033[0m"; }
 
-# 输入域名
-read -p "请输入域名（例如 status.nekomini.site）: " DOMAIN
+ask_info(){
 
-# 输入端口
-read -p "请输入需要反代的本地端口（例如 3001）: " PORT
+    read -rp "请输入域名: " DOMAIN
+    read -rp "请输入本地端口: " PORT
 
-# 检查输入
-if [[ -z "$DOMAIN" || -z "$PORT" ]]; then
-    echo "域名或端口不能为空"
-    exit 1
-fi
+    if [[ -z "$DOMAIN" || -z "$PORT" ]]; then
+        red "域名或端口不能为空"
+        exit 1
+    fi
+}
 
-echo ""
-echo "开始安装依赖..."
+install_base(){
 
-apt update
-apt install -y nginx certbot python3-certbot-nginx
+    yellow "安装依赖..."
 
-echo ""
-echo "创建 nginx 配置..."
+    apt update
 
-CONFIG_FILE="/etc/nginx/sites-available/$DOMAIN"
+    apt install -y nginx certbot python3-certbot-nginx
+}
 
-cat > $CONFIG_FILE <<EOF
+check_port(){
+
+    if ! ss -tulpn | grep -q ":$PORT "; then
+        red "端口 $PORT 未运行"
+        exit 1
+    fi
+
+    green "检测到端口 $PORT 正在运行"
+}
+
+create_nginx(){
+
+    yellow "创建 nginx 配置..."
+
+cat > /etc/nginx/sites-available/$DOMAIN <<EOF
 server {
     listen 80;
     server_name $DOMAIN;
 
     location / {
+
         proxy_pass http://localhost:$PORT;
 
         proxy_http_version 1.1;
@@ -62,43 +63,62 @@ server {
 }
 EOF
 
-echo ""
-echo "启用站点..."
+    ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/$DOMAIN
 
-ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/$DOMAIN
+    nginx -t
 
-echo ""
-echo "检查 nginx 配置..."
+    systemctl reload nginx
 
-nginx -t
+    green "nginx 配置完成"
+}
 
-echo ""
-echo "重载 nginx..."
+install_ssl(){
 
-systemctl reload nginx
+    yellow "申请 SSL 证书..."
 
-echo ""
-echo "开始申请 HTTPS 证书..."
+    certbot --nginx \
+        -d $DOMAIN \
+        --non-interactive \
+        --agree-tos \
+        --register-unsafely-without-email \
+        --redirect
 
-certbot --nginx -d $DOMAIN --non-interactive --agree-tos -m admin@$DOMAIN --redirect
+    green "SSL 申请成功"
+}
 
-echo ""
-echo "======================================"
-echo " HTTPS 配置完成"
-echo "======================================"
+show_result(){
 
-echo ""
-echo "访问地址："
-echo "https://$DOMAIN"
+    echo
 
-echo ""
-echo "反代端口："
-echo "localhost:$PORT"
+    green "====================================="
+    green "部署完成"
+    green "====================================="
 
-echo ""
-echo "nginx 配置文件："
-echo "$CONFIG_FILE"
+    echo
 
-echo ""
-echo "证书自动续期已启用"
-```
+    blue "访问地址:"
+    echo "https://$DOMAIN"
+
+    echo
+
+    blue "反代端口:"
+    echo "$PORT"
+}
+
+main(){
+
+    ask_info
+
+    install_base
+
+    check_port
+
+    create_nginx
+
+    install_ssl
+
+    show_result
+}
+
+main
+
